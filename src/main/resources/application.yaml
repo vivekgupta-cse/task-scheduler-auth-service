@@ -1,0 +1,47 @@
+server:
+  port: 8085
+
+spring:
+  application:
+    name: auth-service
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/auth_db
+    username: ${DB_USERNAME:docker}
+    password: ${DB_PASSWORD:docker}
+    driver-class-name: org.postgresql.Driver
+
+    jpa:
+      hibernate:
+        ddl-auto: validate
+      show-sql: false             # Disabled — this prints to stdout only, bypassing the log file
+      properties:
+        hibernate:
+          dialect: org.hibernate.dialect.PostgreSQLDialect
+        # This ensures JPA waits for Flyway even if the auto-detection fails
+        javax.persistence.schema-generation.database.action: none
+
+    flyway:
+      enabled: true
+      baseline-on-migrate: true # Useful when adding Flyway to an existing DB
+
+    threads:
+      virtual:
+        enabled: true
+
+  management:
+    endpoints:
+      web:
+        exposure:
+          include: 'health,info,prometheus'
+
+      jmx:
+        exposure:
+          include: health,info
+
+
+  # Note: To enable the health endpoint, set management.endpoints.web.exposure.include=health,info
+
+jwt:
+  secret: ${JWT_SECRET:my-local-dev-secret-only}
+  expiry-seconds: 3600

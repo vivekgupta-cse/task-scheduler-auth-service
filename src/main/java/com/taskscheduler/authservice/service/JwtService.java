@@ -1,0 +1,140 @@
+package com.taskscheduler.authservice.service;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.taskscheduler.authservice.config.JwtConfig;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.util.Base64;
+import java.util.HashMap;
+import java.util.Map;
+
+@Service
+public class JwtService {
+
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(JwtService.class);
+
+    // In production, move this to application.properties and rotate keys
+    // Provide a default so the application can start even if the property is not set.
+    private final JwtConfig jwtConfig;
+
+    @Value("${jwt.expiry-seconds}")
+    private long ttlSeconds;
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    public JwtService(JwtConfig jwtConfig) {
+        this.jwtConfig = jwtConfig;
+    }
+
+    public String generateToken(String username) {
+        try {
+            Map<String, Object> header = new HashMap<>();
+            header.put("alg", "HS256");
+            header.put("typ", "JWT");
+
+            long now = Instant.now().getEpochSecond();
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("sub", username);
+            payload.put("iat", now);
+            payload.put("exp", now + ttlSeconds);
+
+            String headerJson = MAPPER.writeValueAsString(header);
+            String payloadJson = MAPPER.writeValueAsString(payload);
+
+            String headerB64 = base64UrlEncode(headerJson.getBytes(StandardCharsets.UTF_8));
+            String payloadB64 = base64UrlEncode(payloadJson.getBytes(StandardCharsets.UTF_8));
+
+            String signingInput = headerB64 + "." + payloadB64;
+            String signature = computeHmacSha256(signingInput, jwtConfig.getSecret());
+
+            return signingInput + "." + signature;
+        } catch (Exception ex) {
+            log.error("Failed to generate token for user={}", username, ex);
+            throw new RuntimeException("Failed to generate authentication token", ex);
+        }
+    }
+
+    /**
+     * Returns username only if the token has a valid signature AND is not expired.
+     * Catches all exceptions to return null rather than propagating.
+     */
+    public String extractUsernameIfTokenIsValid(String token) {
+        try {
+            String username = extractUsername(token); // already checks signature + expiry
+            log.debug("JWT validated for user={}", username);
+            return username;
+        } catch (Exception e) {
+            log.debug("JWT validation failed: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    private String extractUsername(String token) {
+        try {
+            String[] parts = token.split("\\.");
+            if (parts.length != 3) throw new IllegalArgumentException("Invalid JWT token format");
+
+            String headerB64 = parts[0];
+            String payloadB64 = parts[1];
+            String signatureB64 = parts[2];
+
+            String signingInput = headerB64 + "." + payloadB64;
+            String expectedSig = computeHmacSha256(signingInput, jwtConfig.getSecret());
+            if (!constantTimeEquals(expectedSig, signatureB64)) {
+                throw new RuntimeException("Invalid JWT signature");
+            }
+
+            byte[] payloadBytes = base64UrlDecode(payloadB64);
+            Map<String, Object> payload = MAPPER.readValue(payloadBytes, Map.class);
+
+            // check exp
+            Object expObj = payload.get("exp");
+            if (expObj != null) {
+                long exp = ((Number) expObj).longValue();
+                long now = Instant.now().getEpochSecond();
+                if (now > exp) throw new RuntimeException("JWT token expired");
+            }
+
+            Object sub = payload.get("sub");
+            return sub == null ? null : sub.toString();
+        } catch (RuntimeException re) {
+            throw re;
+        } catch (Exception ex) {
+            throw new RuntimeException("Failed to parse JWT token", ex);
+        }
+    }
+
+    // Helpers
+    private static String computeHmacSha256(String data, String secret) throws Exception {
+        Mac mac = Mac.getInstance("HmacSHA256");
+        SecretKeySpec keySpec = new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
+        mac.init(keySpec);
+        byte[] sig = mac.doFinal(data.getBytes(StandardCharsets.UTF_8));
+        return base64UrlEncode(sig);
+    }
+
+    private static String base64UrlEncode(byte[] data) {
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(data);
+    }
+
+    private static byte[] base64UrlDecode(String s) {
+        return Base64.getUrlDecoder().decode(s);
+    }
+
+    // Prevent timing attacks for signature comparison
+    private static boolean constantTimeEquals(String a, String b) {
+        if (a.length() != b.length()) return false;
+        byte[] aBytes = a.getBytes(StandardCharsets.UTF_8);
+        byte[] bBytes = b.getBytes(StandardCharsets.UTF_8);
+        int result = 0;
+        for (int i = 0; i < aBytes.length; i++) {
+            result |= aBytes[i] ^ bBytes[i];
+        }
+        return result == 0;
+    }
+}
