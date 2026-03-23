@@ -75,3 +75,42 @@ dependencies {
 
     implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:3.0.2")
 }
+
+// Add manifest information for jars (author, license) so packaged artifacts carry metadata
+val projectAuthor = "Vivek Gupta"
+val projectAuthorEmail = "gvivek206@gmail.com"
+val projectLicenseName = "Apache License, Version 2.0"
+val projectLicenseUrl = "https://www.apache.org/licenses/LICENSE-2.0.txt"
+val projectUrl = "https://github.com/your-org/task-scheduler-auth-service"
+
+// Enrich produced JARs with metadata
+// Add manifest attributes (author/license metadata) to both plain JAR and bootJar artifacts
+tasks.withType<Jar> {
+    manifest {
+        attributes(mapOf(
+            "Implementation-Title" to project.description,
+            "Implementation-Version" to project.version,
+            "Implementation-Vendor" to projectAuthor,
+            "Implementation-Vendor-Email" to projectAuthorEmail,
+            "Implementation-URL" to projectUrl,
+            "Built-By" to projectAuthor,
+            "Implementation-License" to projectLicenseName,
+            "Implementation-License-URL" to projectLicenseUrl
+        ))
+    }
+}
+
+tasks.named<org.springframework.boot.gradle.tasks.bundling.BootJar>("bootJar") {
+    manifest {
+        attributes(mapOf(
+            "Implementation-Title" to project.description,
+            "Implementation-Version" to project.version,
+            "Implementation-Vendor" to projectAuthor,
+            "Implementation-Vendor-Email" to projectAuthorEmail,
+            "Implementation-URL" to projectUrl,
+            "Built-By" to projectAuthor,
+            "Implementation-License" to projectLicenseName,
+            "Implementation-License-URL" to projectLicenseUrl
+        ))
+    }
+}

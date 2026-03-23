@@ -1,31 +1,59 @@
+
 # Task Scheduler — Auth Service
 
-This repository contains a small Spring Boot-based authentication service used by the Task Scheduler project. It provides user registration and login endpoints and issues JWT tokens for authenticated users.
+Production-grade, professional README for the Task Scheduler Authentication Service. This document describes the service purpose, architecture, how to build/run it, configuration and operational notes, API reference, troubleshooting guidance, author and licensing.
 
-High-level checklist
-- Overview and purpose
-- How to build and run locally
-- Required environment variables and defaults
-- API endpoints and examples (register / login)
-- Troubleshooting notes (including PasswordEncoder bean issue)
+Table of contents
+- Overview
+- Architecture
+- Quick start (build & run)
+- Configuration (environment variables and properties)
+- API (endpoints, payloads, examples)
+- Operational notes (logging, health, monitoring)
+- Troubleshooting
+- Development & testing
+- Author
+- License
 
-Project layout (important files)
-- `src/main/java/com/taskscheduler/authservice/` — Java sources
-  - `controller/AuthController.java` — REST endpoints (/api/auth)
-  - `service/AuthService.java` — business logic (uses `PasswordEncoder`)
-  - `service/JwtService.java` — lightweight JWT implementation
-  - `security/JwtAuthenticationFilter.java` — authentication filter
-  - `config/` — configuration classes (Flyway, JwtConfig, SecurityConfig)
-- `src/main/resources/application.yaml` — default configuration
+Overview
+--------
+The Auth Service is a small, focused Spring Boot application that provides user registration and authentication for the Task Scheduler system. It exposes REST endpoints for registering users and issuing JWTs for authenticated sessions. The service has a thin, well-defined responsibility: user lifecycle (register/login) and token issuance/verification.
 
-Requirements
-- Java 17 or later
-- Gradle (wrapper included: `./gradlew`)
-- PostgreSQL when running with the default datasource (or adjust `spring.datasource.url` to use another DB).
+Key responsibilities
+- Securely store user credentials (BCrypt hashed passwords).
+- Provide a /api/auth REST surface for register/login operations.
+- Issue and validate JWT tokens used by downstream services.
+- Apply database migrations via Flyway on startup (configurable).
+
+Architecture
+------------
+This project uses a simple layered architecture:
+
+- Controller layer: `controller/AuthController` — HTTP REST API, request validation.
+- Service layer: `service/AuthService`, `service/JwtService` — business rules and token management.
+- Security: `security/JwtAuthenticationFilter` and `config/SecurityConfig` — request-level authentication and PasswordEncoder bean.
+- Persistence: Spring Data / JPA repositories, PostgreSQL (default) and Flyway for schema migrations.
+
+ASCII diagram
+
+  +------------+       +------------+       +-----------+
+  |  Clients   | <---> | AuthController | <---> | AuthService |
+  +------------+       +------------+       +-----------+
+                                   |                 |
+                                   v                 v
+                           JwtService (create/verify)  Repository (User)
+                                   |
+                                   v
+                           Downstream services verify JWTs
+
+Quick start (build & run)
+-------------------------
+Prerequisites
+- Java 17 or later (toolchain support in Gradle wrapper).
+- Gradle (wrapper included: `./gradlew`).
+- PostgreSQL when running with the default datasource (or update `spring.datasource.url`).
 
 Build
-
-From the project root run:
 
 ```bash
 ./gradlew clean build
@@ -33,46 +61,36 @@ From the project root run:
 
 Run (development)
 
-Run using the Gradle Spring Boot plugin:
-
 ```bash
 ./gradlew bootRun
-```
-
-Or run the packaged jar after building:
-
-```bash
+# or run packaged jar after build
 java -jar build/libs/*-SNAPSHOT.jar
 ```
 
-Configuration / Environment variables
-- `server.port` — default: `8085` (see `application.yaml`)
+Configuration (important properties / env vars)
+----------------------------------------------
+- server.port — default: 8085 (see `src/main/resources/application.yaml`).
 - Database (defaults are in `application.yaml`):
-  - `spring.datasource.url` — default: `jdbc:postgresql://localhost:5432/auth_db`
-  - `DB_USERNAME` — environment variable placeholder used in `application.yaml` (default: `docker`)
-  - `DB_PASSWORD` — environment variable placeholder (default: `docker`)
+  - spring.datasource.url — default: `jdbc:postgresql://localhost:5432/auth_db`
+  - DB_USERNAME, DB_PASSWORD — referenced by `application.yaml` (defaults in file: `docker`).
 - JWT
-  - `JWT_SECRET` — default: `my-local-dev-secret-only` when not provided. In production override via env var or properties.
-  - `jwt.expiry-seconds` — token TTL (must be set; check `application.yaml` or provide via env/properties).
+  - JWT_SECRET — default local-dev fallback: `my-local-dev-secret-only`. ALWAYS override in production using environment variables or secure configuration management.
+  - jwt.expiry-seconds — token TTL (configured in properties).
 
-Quick start (local, using defaults)
-
-1. Ensure PostgreSQL is running and a database `auth_db` exists (or update `spring.datasource.url` to point at a DB you have).
-2. Start the app:
+Set environment variables example (Linux/macOS):
 
 ```bash
-# optionally export DB_USERNAME and DB_PASSWORD if you changed them
-./gradlew bootRun
+export DB_USERNAME=docker
+export DB_PASSWORD=docker
+export JWT_SECRET="a-very-secret-value"
 ```
 
-API
-
-Base path: `/api/auth`
-
+API (base path: /api/auth)
+--------------------------------
 1) Register
 
-- POST `/api/auth/register`
-- Request JSON:
+- POST /api/auth/register
+- Request JSON
 
 ```json
 {
@@ -81,7 +99,9 @@ Base path: `/api/auth`
 }
 ```
 
-- Example curl:
+- Response: 200 OK (success message) or 4xx with JSON error payload.
+
+Example curl
 
 ```bash
 curl -sS -X POST http://localhost:8085/api/auth/register \
@@ -89,61 +109,81 @@ curl -sS -X POST http://localhost:8085/api/auth/register \
   -d '{"username":"alice","password":"s3cret"}'
 ```
 
-Response: 200 OK with a short success message or 4xx with error details.
-
 2) Login
 
-- POST `/api/auth/login`
+- POST /api/auth/login
 - Request JSON same as register.
 - Response: a JWT token string when credentials are valid.
 
-Example:
+Example curl
 
 ```bash
 curl -sS -X POST http://localhost:8085/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"alice","password":"s3cret"}'
-
-# returns a token (string)
 ```
 
 Using the token
+---------------
+Include the token in the HTTP Authorization header for protected endpoints:
 
-Once you have a token, include it in the `Authorization` header as `Bearer <token>` for protected endpoints. The service includes `JwtAuthenticationFilter` which extracts and validates the token.
+Authorization: Bearer <token>
+
+Operational notes
+-----------------
+- Logging: the service writes logs to `logs/auth-service.log` (see `logback-spring.xml`). Use `tail -f logs/auth-service.log` to follow logs.
+- Health & metrics: Actuator is included. Expose and secure /actuator endpoints as appropriate in production.
+- Flyway: database migrations are located in `src/main/resources/db/migration`.
 
 Troubleshooting
+---------------
+- Missing PasswordEncoder bean error
 
-- Error: "Parameter 1 of constructor in ... AuthService required a bean of type 'org.springframework.security.crypto.password.PasswordEncoder' that could not be found." 
-  - Cause: Spring could not find any `PasswordEncoder` bean to inject into `AuthService`.
-  - Fix: Add a `PasswordEncoder` bean to the application context. This project includes `SecurityConfig.java` which exposes a `BCryptPasswordEncoder` bean at `src/main/java/com/taskscheduler/authservice/config/SecurityConfig.java`. If you fork this project or remove that class, ensure you provide a bean like:
+  Error: "Parameter 1 of constructor in ... AuthService required a bean of type 'org.springframework.security.crypto.password.PasswordEncoder' that could not be found."
 
-```java
-@Configuration
-public class SecurityConfig {
-    @Bean
-    public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
-    }
-}
-```
+  Cause: Spring could not find any `PasswordEncoder` bean to inject into `AuthService`.
 
-- If you see Flyway trying to run during unit tests and failing, set `spring.flyway.enabled=false` for the test profile or in your test properties.
-- JWT issues: the default secret is set in `application.yaml` for local dev only. For production always set `JWT_SECRET` to a secure value and rotate secrets as needed.
+  Fix: This project provides `SecurityConfig.java` which registers a `BCryptPasswordEncoder` bean. If you remove or change it in a fork, ensure you provide a bean like:
 
-Logging
-- The app writes logs to `logs/auth-service.log` (see `logback-spring.xml`). Tail the log while running:
+  ```java
+  @Configuration
+  public class SecurityConfig {
+      @Bean
+      public PasswordEncoder passwordEncoder() {
+          return new BCryptPasswordEncoder();
+      }
+  }
+  ```
 
-```bash
-tail -f logs/auth-service.log
-```
+- Flyway running during tests
 
-Development notes
-- The project uses Lombok (`@RequiredArgsConstructor`, `@Builder`). Ensure your IDE has Lombok support enabled.
-- The `JwtService` in this project implements a small JWT creation/verification mechanism; in production you may prefer a well-tested library like `jjwt` or `java-jwt`.
+  If Flyway migrations run during unit tests and fail, disable Flyway for tests by setting `spring.flyway.enabled=false` for the test profile or via test properties.
 
-Contributing
-- Contributions and fixes are welcome. Please add tests for new features and follow existing code style.
+- JWT issues
+
+  The default secret in `application.yaml` is for local development only. In production supply a secure `JWT_SECRET` and rotate keys periodically.
+
+Development & testing
+---------------------
+- Lombok: project uses Lombok annotations (`@RequiredArgsConstructor`, `@Builder`). Ensure your IDE has Lombok support enabled.
+- Tests: an in-memory H2 database is included for tests to avoid needing a live Postgres instance.
+
+Author
+------
+Vivek Gupta
+Email: gvivek206@gmail.com
 
 License
-- This project is provided as-is for learning and development purposes.
+-------
+This project is licensed under the Apache License
+
+Apache License
+Version 2.0, January 2004
+http://www.apache.org/licenses/
+
+You should have received a copy of the Apache License along with this project in the `LICENSE` file.
+
+Contact & contribution guidelines
+---------------------------------
+If you find issues or want to contribute, please open a pull request or contact the author at gvivek206@gmail.com. For significant changes, include tests and update documentation.
 
